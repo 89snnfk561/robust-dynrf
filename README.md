@@ -80,6 +80,14 @@ wget https://www.dropbox.com/s/4j4z58wuv8o0mfz/models.zip
 unzip models.zip
 cd ..
 ```
+----
+.sh
+```
+bash preprocess.sh ${SCENE_DIR}
+```
+
+OR do it separately
+-----
 
 Estimate monocular depth.
 ```

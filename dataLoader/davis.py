@@ -275,6 +275,9 @@ class DavisDataset(Dataset):
         H = tmp_img.shape[0]
         W = tmp_img.shape[1]
         self.img_wh = np.array([int(W / self.downsample), int(H / self.downsample)])
+
+        self.img_wh = tuple(self.img_wh)
+
         # self.focal = [(854 / 2 * np.sqrt(3)) / float(self.downsample), (854 / 2 * np.sqrt(3)) / float(self.downsample)]
         self.focal = [
             (max(H, W) / 2 * np.sqrt(3)) / float(self.downsample),
@@ -358,7 +361,12 @@ class DavisDataset(Dataset):
             image_path = self.image_paths[i]
 
             if self.use_disp:
-                disp_path = os.path.join(self.root_dir, "dpt", str(i).zfill(5) + ".npy")
+                # disp_path = os.path.join(self.root_dir, "dpt", str(i).zfill(5) + ".npy")
+
+                disp_path = os.path.join(
+                    os.path.dirname(image_path).replace("images", "dpt"),
+                    os.path.splitext(os.path.basename(image_path))[0] + ".npy"
+                )
                 disp_data = np.load(disp_path)
                 disp = torch.from_numpy(resize_disp(disp_data, H, W)).view(
                     -1

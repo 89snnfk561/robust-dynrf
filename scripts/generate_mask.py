@@ -77,8 +77,13 @@ def run_maskrcnn(model, img_path):
     else:
         intHeight = 1024
         intWidth = 576
+    
+    try:
+        resample = Image.ANTIALIAS  # for Pillow<10
+    except AttributeError:
+        resample = Image.Resampling.LANCZOS
 
-    image = o_image.resize((intWidth, intHeight), Image.ANTIALIAS)
+    image = o_image.resize((intWidth, intHeight), resample)
 
     image_tensor = torchvision.transforms.functional.to_tensor(image).cuda()
 
@@ -153,14 +158,20 @@ if __name__ == "__main__":
     args = parser.parse_args()
     data_dir = args.dataset_path
 
-    images = sorted(glob.glob(os.path.join(data_dir, "images", "*.jpg")))
+    images = sorted(
+        glob.glob(os.path.join(data_dir, "images", "*.jpg")) +
+        glob.glob(os.path.join(data_dir, "images", "*.PNG"))
+    )
 
     img = load_image(images[0])
     H = img.shape[2]
     W = img.shape[3]
 
     # RUN SEMANTIC SEGMENTATION
-    img_path_list = sorted(glob.glob(os.path.join(data_dir, "images", "*.jpg")))
+    img_path_list = sorted(
+        glob.glob(os.path.join(data_dir, "images", "*.jpg")) +
+        glob.glob(os.path.join(data_dir, "images", "*.PNG"))
+    )
     netMaskrcnn = (
         torchvision.models.detection.maskrcnn_resnet50_fpn(pretrained=True)
         .cuda()

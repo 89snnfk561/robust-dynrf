@@ -82,6 +82,10 @@ def run(input_path, output_path, output_img_path, model_path):
     img_names = sorted(glob.glob(os.path.join(input_path, "*")))
     num_images = len(img_names)
 
+    # check
+    print(input_path)
+    print(img_names)
+
     # create output folder
     os.makedirs(output_path, exist_ok=True)
 

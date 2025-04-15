@@ -57,7 +57,7 @@ class AlphaGridMask(torch.nn.Module):
         xyz_sampled = self.normalize_coord(xyz_sampled)
         alpha_vals = F.grid_sample(
             torch.permute(
-                self.alpha_volume.to(xyz_sampled.get_device())[:, 0], (0, 4, 1, 2, 3)
+                self.alpha_volume.to(xyz_sampled.device)[:, 0], (0, 4, 1, 2, 3)
             ),
             xyz_sampled.view(1, -1, 1, 1, 3),
             align_corners=True,
@@ -74,8 +74,8 @@ class AlphaGridMask(torch.nn.Module):
 
     def normalize_coord(self, xyz_sampled):
         return (
-            xyz_sampled - self.aabb.to(xyz_sampled.get_device())[0]
-        ) * self.invgridSize.to(xyz_sampled.get_device()) - 1
+            xyz_sampled - self.aabb.to(xyz_sampled.device)[0]
+        ) * self.invgridSize.to(xyz_sampled.device) - 1
 
 
 class MLPRender_Fea(torch.nn.Module):
@@ -424,13 +424,13 @@ class TensorBase(torch.nn.Module):
 
     def normalize_coord(self, xyz_sampled):
         return (
-            xyz_sampled - self.aabb.to(xyz_sampled.get_device())[0]
-        ) * self.invaabbSize.to(xyz_sampled.get_device()) - 1
+            xyz_sampled - self.aabb.to(xyz_sampled.device)[0]
+        ) * self.invaabbSize.to(xyz_sampled.device) - 1
 
     def unnormalize_coord(self, xyz_sampled):
         return (xyz_sampled + 1) / self.invaabbSize.to(
-            xyz_sampled.get_device()
-        ) + self.aabb.to(xyz_sampled.get_device())[0]
+            xyz_sampled.device
+        ) + self.aabb.to(xyz_sampled.device)[0]
 
     def get_optparam_groups(self, lr_init_spatial=0.02, lr_init_network=0.001):
         pass
@@ -493,8 +493,8 @@ class TensorBase(torch.nn.Module):
 
         rays_pts = rays_o[..., None, :] + rays_d[..., None, :] * interpx[..., None]
         mask_outbbox = (
-            (self.aabb.to(rays_pts.get_device())[0] > rays_pts)
-            | (rays_pts > self.aabb.to(rays_pts.get_device())[1])
+            (self.aabb.to(rays_pts.device)[0] > rays_pts)
+            | (rays_pts > self.aabb.to(rays_pts.device)[1])
         ).any(dim=-1)
         return rays_pts, interpx, ~mask_outbbox
 
@@ -581,9 +581,16 @@ class TensorBase(torch.nn.Module):
         )
         for i in range(gridSize[0]):
             for t_idx, t in enumerate(range(self.tSize.item())):
+
+                # Avoid divide by zero when tSize == 1
+                if self.tSize.item() == 1:
+                    t_norm = 0.0
+                else:
+                    t_norm = t / (self.tSize.item() - 1.0) * 2.0 - 1.0
+
                 alpha[i, :, :, t_idx] = self.compute_alpha(
                     dense_xyz[i].view(-1, 3),
-                    t / (self.tSize.item() - 1.0) * 2.0 - 1.0,
+                    t_norm,
                     self.stepSize,
                 ).view((gridSize[1], gridSize[2]))
         return alpha, dense_xyz
@@ -693,7 +700,8 @@ class TensorBase(torch.nn.Module):
         if alpha_mask.any():
             xyz_sampled = self.normalize_coord(xyz_locs[alpha_mask])
             t_sampled = t * torch.ones(xyz_sampled.shape).to(self.device)[..., 0]
-            sigma_feature = self.compute_densityfeature(xyz_sampled, t_sampled)
+            
+            sigma_feature = self.compute_densityfeature(xyz_sampled, t_sampled, None)
             validsigma = self.feature2density(sigma_feature)
             sigma[alpha_mask] = validsigma
 

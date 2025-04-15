@@ -82,20 +82,21 @@ class SimpleSampler:
     def __init__(self, total, batch):
         self.total = total
         self.batch = batch
-        self.curr = total
-        self.ids = None
+        self.curr = 0
+        self.ids = torch.LongTensor(np.random.permutation(self.total))
 
     def nextids(self):
-        self.curr += self.batch
         if self.curr + self.batch > self.total:
             self.ids = torch.LongTensor(np.random.permutation(self.total))
             self.curr = 0
-        return self.ids[self.curr : self.curr + self.batch]
+        idx = self.ids[self.curr: self.curr + self.batch]
+        self.curr += self.batch
+        return idx
 
 
 def ids2pixel(W, H, ids):
     """
-    Regress pixel coordinates from
+    Regress pixel coordinaes from
     """
     col = ids % W
     row = (ids // W) % H
@@ -109,13 +110,31 @@ def export_mesh(args):
     ckpt = torch.load(args.ckpt, map_location=device)
     kwargs = ckpt["kwargs"]
     kwargs.update({"device": device})
+
+    # unexpected keyword argument
+    poses_mtx = kwargs.pop("se3_poses").to(device)
+    focal_refine = kwargs.pop("focal_ratio_refine").to(device)
+
     tensorf = eval(args.model_name)(**kwargs)
     tensorf.load(ckpt)
 
     alpha, _ = tensorf.getDenseAlpha()
+    alpha_t = alpha[..., 0]
+
+    print(alpha.shape)
+    print(alpha_t.shape)
+    '''
     convert_sdf_samples_to_ply(
         alpha.cpu(), f"{args.ckpt[:-3]}.ply", bbox=tensorf.aabb.cpu(), level=0.005
     )
+    '''
+    convert_sdf_samples_to_ply(
+        alpha_t.cpu(), f"{args.ckpt[:-3]}.ply", bbox=tensorf.aabb.cpu(), level=0.005
+    )
+    
+    
+
+    
 
 
 def set_axes_equal(ax):
@@ -891,12 +910,16 @@ def reconstruction(args):
         step_ratio=args.step_ratio,
         fea2denseAct=args.fea2denseAct,
     )
-
+    
     # dynamic tensorf
     if args.ckpt is not None:
         ckpt = torch.load(args.ckpt, map_location=device)
         kwargs = ckpt["kwargs"]
         kwargs.update({"device": device})
+        
+        poses_mtx = kwargs.pop("se3_poses").to(device)
+        focal_refine = kwargs.pop("focal_ratio_refine").to(device)
+
         tensorf = eval(args.model_name)(**kwargs)
         tensorf.load(ckpt)
     else:
@@ -1029,6 +1052,19 @@ def reconstruction(args):
     pbar = tqdm(
         range(args.n_iters), miniters=args.progress_refresh_rate, file=sys.stdout
     )
+
+
+
+    max_value = min([
+        allrgbs.shape[0],
+        allts.shape[0],
+        allgrids.shape[0],
+        allflows_f.shape[0],
+        allflowmasks_f.shape[0],
+        allflows_b.shape[0],
+        allflowmasks_b.shape[0],
+    ])
+
     for iteration in pbar:
         # Lambda decay.
         Temp_static = 1.0 / (10 ** (iteration / (100000)))
@@ -1041,6 +1077,8 @@ def reconstruction(args):
             )
 
         ray_idx = trainingSampler.nextids()
+        if ray_idx.max() > max_value:
+            ray_idx = torch.clamp(ray_idx, min=0, max=max_value - 1)
 
         rgb_train, ts_train, grid_train = (
             allrgbs[ray_idx].to(device),
@@ -2408,7 +2446,19 @@ def reconstruction(args):
             set_axes_equal(ax)
             plt.tight_layout()
             fig.canvas.draw()
-            img = np.fromstring(fig.canvas.tostring_rgb(), dtype=np.uint8, sep="")
+            # img = np.fromstring(fig.canvas.tostring_rgb(), dtype=np.uint8, sep="")
+            try:
+                img = np.fromstring(fig.canvas.tostring_rgb(), dtype=np.uint8, sep="")
+            except AttributeError:
+                img = np.fromstring(fig.canvas.tostring_argb(), dtype=np.uint8, sep="")
+                img = img.reshape((-1, 4))  # 重新调整为 (像素数量, ARGB)
+
+                # 提取 RGB 通道
+                rgb = img[:, 1:4]  # 提取红、绿、蓝通道
+
+                # 重新将 RGB 数组展平为一维数组
+                img = rgb.flatten()
+
             img = img.reshape(fig.canvas.get_width_height()[::-1] + (3,))
             img = (np.transpose(img, (2, 0, 1)) / 255.0).astype(np.float32)
             summary_writer.add_image("camera_poses", img, iteration)

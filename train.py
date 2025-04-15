@@ -944,6 +944,7 @@ def reconstruction(args):
             fea2denseAct=args.fea2denseAct,
         )
 
+
     grad_vars = tensorf_static.get_optparam_groups(args.lr_init, args.lr_basis)
     grad_vars.extend(tensorf.get_optparam_groups(args.lr_init, args.lr_basis))
     if args.lr_decay_iters > 0:
@@ -1065,6 +1066,19 @@ def reconstruction(args):
         allflowmasks_b.shape[0],
     ])
 
+    # ---------------多GPU----------------------
+
+    from torch.nn import DataParallel 
+
+    tensorf_static = DataParallel(tensorf_static)
+    tensorf = DataParallel(tensorf)
+
+    
+    model_fn_static = tensorf_static.module if isinstance(tensorf_static, torch.nn.DataParallel) else tensorf_static
+    model_fn = tensorf.module if isinstance(tensorf, torch.nn.DataParallel) else tensorf
+
+    # ---------------多GPU----------------------
+
     for iteration in pbar:
         # Lambda decay.
         Temp_static = 1.0 / (10 ** (iteration / (100000)))
@@ -1127,15 +1141,17 @@ def reconstruction(args):
 
         total_loss = 0.0
 
+        
+
         xyz_sampled, z_vals, ray_valid = sampleXYZ(
-            tensorf,
+            model_fn,
             rays_train.detach(),
             N_samples=nSamples,
             ray_type=args.ray_type,
             is_train=True,
         )
         # static tensorf
-        _, _, _, _, _, _, rgb_points_static, sigmas_static, _, _ = tensorf_static(
+        _, _, _, _, _, _, rgb_points_static, sigmas_static, _, _ = model_fn_static(
             rays_train.detach(),
             ts_train,
             None,
@@ -1159,7 +1175,7 @@ def reconstruction(args):
             sigmas_dynamic,
             z_vals_dynamic,
             dists_dynamic,
-        ) = tensorf(
+        ) = model_fn(
             rays_train.detach(),
             ts_train,
             None,
@@ -1204,7 +1220,7 @@ def reconstruction(args):
         ray_idx_rand = trainingSampler_2.nextids()
         ts_train_rand = allts[ray_idx_rand].to(device)
         xyz_sampled_rand, z_vals_rand, ray_valid_rand = sampleXYZ(
-            tensorf,
+            model_fn,
             rays_train.detach(),
             N_samples=nSamples,
             ray_type=args.ray_type,
@@ -1221,7 +1237,7 @@ def reconstruction(args):
             sigmas_static_rand,
             _,
             _,
-        ) = tensorf_static(
+        ) = model_fn_static(
             rays_train.detach(),
             ts_train_rand,
             None,
@@ -1244,7 +1260,7 @@ def reconstruction(args):
             sigmas_dynamic_rand,
             z_vals_dynamic_rand,
             dists_dynamic_rand,
-        ) = tensorf(
+        ) = model_fn(
             rays_train.detach(),
             ts_train_rand,
             None,
@@ -1354,7 +1370,7 @@ def reconstruction(args):
                 global_step=iteration,
             )
 
-        scene_flow_f, scene_flow_b = tensorf.get_forward_backward_scene_flow(
+        scene_flow_f, scene_flow_b = model_fn.get_forward_backward_scene_flow(
             pts_ref, ts_train.to(device)
         )
 
@@ -1492,14 +1508,14 @@ def reconstruction(args):
             )
         rays_f_train = torch.cat([rays_f_o, rays_f_d], -1).view(-1, 6)
         xyz_sampled_f, z_vals_f, ray_valid_f = sampleXYZ(
-            tensorf,
+            model_fn,
             rays_f_train.detach(),
             N_samples=nSamples,
             ray_type=args.ray_type,
             is_train=True,
         )
 
-        _, _, _, _, _, _, rgb_points_static_f, sigmas_static_f, _, _ = tensorf_static(
+        _, _, _, _, _, _, rgb_points_static_f, sigmas_static_f, _, _ = model_fn_static(
             rays_f_train.detach(),
             ts_train + t_interval,
             None,
@@ -1522,7 +1538,7 @@ def reconstruction(args):
             sigmas_dynamic_f,
             z_vals_dynamic_f,
             dists_dynamic_f,
-        ) = tensorf(
+        ) = model_fn(
             rays_f_train.detach(),
             ts_train + t_interval,
             None,
@@ -1589,14 +1605,14 @@ def reconstruction(args):
             )
         rays_b_train = torch.cat([rays_b_o, rays_b_d], -1).view(-1, 6)
         xyz_sampled_b, z_vals_b, ray_valid_b = sampleXYZ(
-            tensorf,
+            model_fn,
             rays_b_train.detach(),
             N_samples=nSamples,
             ray_type=args.ray_type,
             is_train=True,
         )
 
-        _, _, _, _, _, _, rgb_points_static_b, sigmas_static_b, _, _ = tensorf_static(
+        _, _, _, _, _, _, rgb_points_static_b, sigmas_static_b, _, _ = model_fn_static(
             rays_b_train.detach(),
             ts_train - t_interval,
             None,
@@ -1619,7 +1635,7 @@ def reconstruction(args):
             sigmas_dynamic_b,
             z_vals_dynamic_b,
             dists_dynamic_b,
-        ) = tensorf(
+        ) = model_fn(
             rays_b_train.detach(),
             ts_train - t_interval,
             None,
@@ -1755,13 +1771,13 @@ def reconstruction(args):
 
         # TV losses
         if Ortho_reg_weight > 0:
-            loss_reg = tensorf.vector_comp_diffs()
+            loss_reg = model_fn.vector_comp_diffs()
             total_loss += Ortho_reg_weight * loss_reg
             summary_writer.add_scalar(
                 "train/reg", loss_reg.detach().item(), global_step=iteration
             )
         if L1_reg_weight > 0:
-            loss_reg_L1_density = tensorf.density_L1()
+            loss_reg_L1_density = model_fn.density_L1()
             total_loss += L1_reg_weight * loss_reg_L1_density
             summary_writer.add_scalar(
                 "train/loss_reg_L1_density",
@@ -1771,20 +1787,20 @@ def reconstruction(args):
 
         if TV_weight_density > 0:
             TV_weight_density *= lr_factor
-            loss_tv = tensorf.TV_loss_density(tvreg) * TV_weight_density
+            loss_tv = model_fn.TV_loss_density(tvreg) * TV_weight_density
             total_loss = total_loss + loss_tv
             summary_writer.add_scalar(
                 "train/reg_tv_density", loss_tv.detach().item(), global_step=iteration
             )
             # TV for blending
-            loss_tv = tensorf.TV_loss_blending(tvreg) * TV_weight_density
+            loss_tv = model_fn.TV_loss_blending(tvreg) * TV_weight_density
             total_loss = total_loss + loss_tv
             summary_writer.add_scalar(
                 "train/reg_tv_blending", loss_tv.detach().item(), global_step=iteration
             )
         if TV_weight_app > 0:
             TV_weight_app *= lr_factor
-            loss_tv = tensorf.TV_loss_app(tvreg) * TV_weight_app
+            loss_tv = model_fn.TV_loss_app(tvreg) * TV_weight_app
             total_loss = total_loss + loss_tv
             summary_writer.add_scalar(
                 "train/reg_tv_app", loss_tv.detach().item(), global_step=iteration
@@ -1792,7 +1808,7 @@ def reconstruction(args):
 
         # static part for pose estimation
         xyz_sampled, z_vals, ray_valid = sampleXYZ(
-            tensorf,
+            model_fn,
             rays_train,
             N_samples=nSamples,
             ray_type=args.ray_type,
@@ -1810,7 +1826,7 @@ def reconstruction(args):
             sigmas_static,
             _,
             _,
-        ) = tensorf_static(
+        ) = model_fn_static(
             rays_train,
             ts_train,
             None,
@@ -1834,7 +1850,7 @@ def reconstruction(args):
             sigmas_dynamic,
             z_vals_dynamic,
             dists_dynamic,
-        ) = tensorf(
+        ) = model_fn(
             rays_train,
             ts_train,
             None,
@@ -1899,7 +1915,7 @@ def reconstruction(args):
             )
 
         if L1_reg_weight > 0:
-            loss_reg_L1_density_s = tensorf_static.density_L1()
+            loss_reg_L1_density_s = model_fn_static.density_L1()
             total_loss += L1_reg_weight * loss_reg_L1_density_s
             summary_writer.add_scalar(
                 "train/loss_reg_L1_density_s",
@@ -1908,7 +1924,7 @@ def reconstruction(args):
             )
 
         if TV_weight_density > 0:
-            loss_tv_static = tensorf_static.TV_loss_density(tvreg) * TV_weight_density
+            loss_tv_static = model_fn_static.TV_loss_density(tvreg) * TV_weight_density
             total_loss = total_loss + loss_tv_static
             summary_writer.add_scalar(
                 "train/reg_tv_density_static",
@@ -1916,7 +1932,7 @@ def reconstruction(args):
                 global_step=iteration,
             )
         if TV_weight_app > 0:
-            loss_tv_static = tensorf_static.TV_loss_app(tvreg) * TV_weight_app
+            loss_tv_static = model_fn_static.TV_loss_app(tvreg) * TV_weight_app
             total_loss = total_loss + loss_tv_static
             summary_writer.add_scalar(
                 "train/reg_tv_app_static",
@@ -2018,13 +2034,13 @@ def reconstruction(args):
                 )
             rays_f_train = torch.cat([rays_f_o, rays_f_d], -1).view(-1, 6)
             xyz_sampled_f, z_vals_f, ray_valid_f = sampleXYZ(
-                tensorf_static,
+                model_fn_static,
                 rays_f_train,
                 N_samples=nSamples,
                 ray_type=args.ray_type,
                 is_train=True,
             )
-            _, _, _, pts_ref_s_ff, weights_s_ff, _, _, _, _, _ = tensorf_static(
+            _, _, _, pts_ref_s_ff, weights_s_ff, _, _, _, _, _ = model_fn_static(
                 rays_f_train,
                 ts_train,
                 None,
@@ -2085,13 +2101,13 @@ def reconstruction(args):
                 )
             rays_b_train = torch.cat([rays_b_o, rays_b_d], -1).view(-1, 6)
             xyz_sampled_b, z_vals_b, ray_valid_b = sampleXYZ(
-                tensorf_static,
+                model_fn_static,
                 rays_b_train,
                 N_samples=nSamples,
                 ray_type=args.ray_type,
                 is_train=True,
             )
-            _, _, _, pts_ref_s_bb, weights_s_bb, _, _, _, _, _ = tensorf_static(
+            _, _, _, pts_ref_s_bb, weights_s_bb, _, _, _, _, _ = model_fn_static(
                 rays_b_train,
                 ts_train,
                 None,
@@ -2199,7 +2215,7 @@ def reconstruction(args):
                 [rays_o_j_neighbor, rays_d_j_neighbor], -1
             ).view(-1, 6)
             xyz_sampled_i_neighbor, z_vals_i_neighbor, ray_valid_i_neighbor = sampleXYZ(
-                tensorf,
+                model_fn,
                 rays_train_i_neighbor,
                 N_samples=nSamples,
                 ray_type=args.ray_type,
@@ -2216,7 +2232,7 @@ def reconstruction(args):
                 sigmas_static_i_neighbor,
                 _,
                 _,
-            ) = tensorf_static(
+            ) = model_fn_static(
                 rays_train_i_neighbor,
                 ts_train,
                 None,
@@ -2239,7 +2255,7 @@ def reconstruction(args):
                 sigmas_dynamic_i_neighbor,
                 z_vals_dynamic_i_neighbor,
                 dists_dynamic_i_neighbor,
-            ) = tensorf(
+            ) = model_fn(
                 rays_train_i_neighbor,
                 ts_train,
                 None,
@@ -2264,7 +2280,7 @@ def reconstruction(args):
                 ray_type=args.ray_type,
             )
             xyz_sampled_j_neighbor, z_vals_j_neighbor, ray_valid_j_neighbor = sampleXYZ(
-                tensorf,
+                model_fn,
                 rays_train_j_neighbor,
                 N_samples=nSamples,
                 ray_type=args.ray_type,
@@ -2281,7 +2297,7 @@ def reconstruction(args):
                 sigmas_static_j_neighbor,
                 _,
                 _,
-            ) = tensorf_static(
+            ) = model_fn_static(
                 rays_train_j_neighbor,
                 ts_train,
                 None,
@@ -2304,7 +2320,7 @@ def reconstruction(args):
                 sigmas_dynamic_j_neighbor,
                 z_vals_dynamic_j_neighbor,
                 dists_dynamic_j_neighbor,
-            ) = tensorf(
+            ) = model_fn(
                 rays_train_j_neighbor,
                 ts_train,
                 None,
@@ -2464,12 +2480,12 @@ def reconstruction(args):
             summary_writer.add_image("camera_poses", img, iteration)
             plt.close(fig)
 
-            tensorf.save(
+            model_fn.save(
                 poses_mtx.detach().cpu(),
                 focal_refine.detach().cpu(),
                 f"{logfolder}/{args.expname}.th",
             )
-            tensorf_static.save(
+            model_fn_static.save(
                 poses_mtx.detach().cpu(),
                 focal_refine.detach().cpu(),
                 f"{logfolder}/{args.expname}_static.th",
@@ -2498,8 +2514,8 @@ def reconstruction(args):
                 test_dataset,
                 poses_mtx,
                 focal_refine.cpu(),
-                tensorf_static,
-                tensorf,
+                model_fn_static,
+                model_fn,
                 args,
                 renderer,
                 None,
@@ -2631,10 +2647,10 @@ def reconstruction(args):
 
         if iteration in upsamp_list:
             n_voxels = N_voxel_list.pop(0)
-            reso_cur = N_to_reso(n_voxels, tensorf.aabb)
+            reso_cur = N_to_reso(n_voxels, model_fn.aabb)
             nSamples = min(args.nSamples, cal_n_samples(reso_cur, args.step_ratio))
-            tensorf.upsample_volume_grid(reso_cur)
-            tensorf_static.upsample_volume_grid(reso_cur)
+            model_fn.upsample_volume_grid(reso_cur)
+            model_fn_static.upsample_volume_grid(reso_cur)
 
             if args.lr_upsample_reset:
                 print("reset lr to initial")
@@ -2645,11 +2661,11 @@ def reconstruction(args):
                     optimizer_focal.param_groups[0]["lr"] = lr_pose
             else:
                 lr_scale = args.lr_decay_target_ratio ** (iteration / args.n_iters)
-            grad_vars = tensorf_static.get_optparam_groups(
+            grad_vars = model_fn_static.get_optparam_groups(
                 args.lr_init * lr_scale, args.lr_basis * lr_scale
             )
             grad_vars.extend(
-                tensorf.get_optparam_groups(
+                model_fn.get_optparam_groups(
                     args.lr_init * lr_scale, args.lr_basis * lr_scale
                 )
             )
@@ -2659,12 +2675,12 @@ def reconstruction(args):
             optimizer_pose.param_groups[0]["lr"] = 0.0
             optimizer_focal.param_groups[0]["lr"] = 0.0
 
-    tensorf.save(
+    model_fn.save(
         poses_mtx.detach().cpu(),
         focal_refine.detach().cpu(),
         f"{logfolder}/{args.expname}.th",
     )
-    tensorf_static.save(
+    model_fn_static.save(
         poses_mtx.detach().cpu(),
         focal_refine.detach().cpu(),
         f"{logfolder}/{args.expname}_static.th",
@@ -2675,8 +2691,8 @@ def reconstruction(args):
         test_dataset,
         poses_mtx,
         focal_refine.cpu(),
-        tensorf_static,
-        tensorf,
+        model_fn_static,
+        model_fn,
         args,
         renderer,
         f"{logfolder}/imgs_test_all",

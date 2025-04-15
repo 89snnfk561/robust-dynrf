@@ -98,8 +98,8 @@ def run(args, input_path, output_path, output_img_path):
 
     with torch.no_grad():
         images = \
-        glob.glob(os.path.join(input_path, "*.png")) + 
-        glob.glob(os.path.join(input_path, "*.jpg")) + 
+        glob.glob(os.path.join(input_path, "*.png")) + \
+        glob.glob(os.path.join(input_path, "*.jpg")) + \
         glob.glob(os.path.join(input_path, "*.PNG"))
 
         images = sorted(images)

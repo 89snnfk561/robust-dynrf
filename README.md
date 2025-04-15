@@ -17,14 +17,15 @@ Dynamic radiance field reconstruction methods aim to model the time-varying stru
 in CVPR 2023 <br>
 
 ## Setup
-Tested with PyTorch 2.0 and CUDA 11.7.
+Tested with PyTorch 2.4.1 and CUDA 12.4.
 ```
-git clone --recursive https://github.com/facebookresearch/robust-dynrf
+git clone --recursive https://github.com/89snnfk561/robust-dynrf
 cd robust-dynrf
 conda create -n RoDynRF python=3.8 -y
 conda activate RoDynRF
 pip install torch torchvision
 pip install tqdm scikit-image opencv-python configargparse lpips imageio-ffmpeg kornia lpips tensorboard imageio easydict matplotlib scipy plyfile timm
+pip install torch_efficient_distloss
 ```
 
 ## Dataset
@@ -135,6 +136,11 @@ This will render the following video results for both RGB and depth.
 
 - spiral: fix time + spiral view
 <img src="images/spiral.gif" width = "640" height = ""  align=center />
+
+## Mesh Export
+```
+python train.py --config configs/${CONFIG_FILE} --ckpt log/${EXP_NAME}/${EXP_NAME}.th --export_mesh 1
+```
 
 ## Evaluation
 Please download the results of our method and the compared methods and evaluation scripts.
